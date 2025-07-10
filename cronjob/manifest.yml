@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: echo-job # Name of the CronJob
+spec:
+  schedule: "*/1 * * * *" # Every minute
+  successfulJobsHistoryLimit: 3 # Keep last 3 successful jobs
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300 # Job will time out after 5 minutes
+      template:
+        spec:
+          containers:
+            - name: echo-container # Name of the container
+              image: busybox # Using busybox for simplicity
+              command: # The job will merely echo a message every minute
+                - /bin/sh
+                - -c
+                - echo "Charlie is doing imaginary BJJ practice at $(date)"
+          restartPolicy: OnFailure # Restart on failure
