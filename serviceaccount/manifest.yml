@@ -1,0 +1,438 @@
+# ServiceAccount Example: RBAC and API Access Demo
+# This example demonstrates ServiceAccount usage with RBAC for different access patterns
+
+---
+# Namespace for the demo
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: serviceaccount-demo
+  labels:
+    name: serviceaccount-demo
+    purpose: rbac-demo
+
+---
+# ServiceAccount 1: Pod Reader (Read-only access to pods)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-reader
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    role: pod-reader
+  annotations:
+    description: "ServiceAccount with read-only access to pods"
+
+---
+# ServiceAccount 2: Config Manager (Read/Write access to ConfigMaps)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: config-manager
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    role: config-manager
+  annotations:
+    description: "ServiceAccount with read/write access to ConfigMaps"
+
+---
+# ServiceAccount 3: Deployment Manager (Full access to deployments)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployment-manager
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    role: deployment-manager
+  annotations:
+    description: "ServiceAccount with full access to deployments"
+
+---
+# ServiceAccount 4: No API Access (Disabled auto-mount)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: no-api-access
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    role: no-api-access
+  annotations:
+    description: "ServiceAccount with no API access"
+automountServiceAccountToken: false
+
+---
+# ServiceAccount 5: Cross-Namespace Reader
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cross-namespace-reader
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    role: cross-namespace-reader
+  annotations:
+    description: "ServiceAccount with cross-namespace read access"
+
+---
+# Role 1: Pod Reader Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader-role
+  namespace: serviceaccount-demo
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Role 2: Config Manager Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: config-manager-role
+  namespace: serviceaccount-demo
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# Role 3: Deployment Manager Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployment-manager-role
+  namespace: serviceaccount-demo
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]  # Often needed to manage deployments
+
+---
+# ClusterRole: Cross-Namespace Reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cross-namespace-reader-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding 1: Bind pod-reader ServiceAccount to pod-reader-role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+  namespace: serviceaccount-demo
+subjects:
+- kind: ServiceAccount
+  name: pod-reader
+  namespace: serviceaccount-demo
+roleRef:
+  kind: Role
+  name: pod-reader-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding 2: Bind config-manager ServiceAccount to config-manager-role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: config-manager-binding
+  namespace: serviceaccount-demo
+subjects:
+- kind: ServiceAccount
+  name: config-manager
+  namespace: serviceaccount-demo
+roleRef:
+  kind: Role
+  name: config-manager-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding 3: Bind deployment-manager ServiceAccount to deployment-manager-role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployment-manager-binding
+  namespace: serviceaccount-demo
+subjects:
+- kind: ServiceAccount
+  name: deployment-manager
+  namespace: serviceaccount-demo
+roleRef:
+  kind: Role
+  name: deployment-manager-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding: Bind cross-namespace-reader ServiceAccount to cross-namespace-reader-role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cross-namespace-reader-binding
+subjects:
+- kind: ServiceAccount
+  name: cross-namespace-reader
+  namespace: serviceaccount-demo
+roleRef:
+  kind: ClusterRole
+  name: cross-namespace-reader-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Test ConfigMap for config-manager to manipulate
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-config
+  namespace: serviceaccount-demo
+data:
+  app.properties: |
+    debug=true
+    max_connections=100
+    timeout=30s
+  database.yaml: |
+    host: localhost
+    port: 5432
+    database: myapp
+
+---
+# Pod 1: Using pod-reader ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-reader-example
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    serviceaccount: pod-reader
+spec:
+  serviceAccountName: pod-reader
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command: 
+    - /bin/bash
+    - -c
+    - |
+      echo "Pod Reader ServiceAccount Demo"
+      echo "=============================="
+      echo "Testing pod read access..."
+      kubectl get pods -n serviceaccount-demo || echo "Failed to get pods"
+      echo ""
+      echo "Testing configmap access (should fail)..."
+      kubectl get configmaps -n serviceaccount-demo || echo "Failed to get configmaps (expected)"
+      echo ""
+      echo "Sleeping..."
+      sleep 3600
+  restartPolicy: Always
+
+---
+# Pod 2: Using config-manager ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-manager-example
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    serviceaccount: config-manager
+spec:
+  serviceAccountName: config-manager
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Config Manager ServiceAccount Demo"
+      echo "=================================="
+      echo "Testing configmap read access..."
+      kubectl get configmaps -n serviceaccount-demo || echo "Failed to get configmaps"
+      echo ""
+      echo "Testing configmap create access..."
+      kubectl create configmap test-config --from-literal=key=value -n serviceaccount-demo || echo "Failed to create configmap"
+      echo ""
+      echo "Testing pod access (should fail)..."
+      kubectl get pods -n serviceaccount-demo || echo "Failed to get pods (expected)"
+      echo ""
+      echo "Sleeping..."
+      sleep 3600
+  restartPolicy: Always
+
+---
+# Pod 3: Using deployment-manager ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: deployment-manager-example
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    serviceaccount: deployment-manager
+spec:
+  serviceAccountName: deployment-manager
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Deployment Manager ServiceAccount Demo"
+      echo "====================================="
+      echo "Testing deployment read access..."
+      kubectl get deployments -n serviceaccount-demo || echo "Failed to get deployments"
+      echo ""
+      echo "Testing pod read access..."
+      kubectl get pods -n serviceaccount-demo || echo "Failed to get pods"
+      echo ""
+      echo "Testing configmap access (should fail)..."
+      kubectl get configmaps -n serviceaccount-demo || echo "Failed to get configmaps (expected)"
+      echo ""
+      echo "Sleeping..."
+      sleep 3600
+  restartPolicy: Always
+
+---
+# Pod 4: Using no-api-access ServiceAccount (no token mounted)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-api-access-example
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    serviceaccount: no-api-access
+spec:
+  serviceAccountName: no-api-access
+  automountServiceAccountToken: false
+  containers:
+  - name: app
+    image: nginx:1.20
+    ports:
+    - containerPort: 80
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "No API Access ServiceAccount Demo" > /usr/share/nginx/html/index.html
+      echo "Token mount status:" >> /usr/share/nginx/html/index.html
+      if [ -d "/var/run/secrets/kubernetes.io/serviceaccount" ]; then
+        echo "Token directory exists (unexpected)" >> /usr/share/nginx/html/index.html
+      else
+        echo "No token directory (expected)" >> /usr/share/nginx/html/index.html
+      fi
+      nginx -g 'daemon off;'
+  restartPolicy: Always
+
+---
+# Pod 5: Using cross-namespace-reader ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cross-namespace-reader-example
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+    serviceaccount: cross-namespace-reader
+spec:
+  serviceAccountName: cross-namespace-reader
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      echo "Cross-Namespace Reader ServiceAccount Demo"
+      echo "=========================================="
+      echo "Testing cross-namespace pod access..."
+      kubectl get pods -A || echo "Failed to get pods across namespaces"
+      echo ""
+      echo "Testing cross-namespace service access..."
+      kubectl get services -A || echo "Failed to get services across namespaces"
+      echo ""
+      echo "Testing deployment access (should fail)..."
+      kubectl get deployments -A || echo "Failed to get deployments (expected)"
+      echo ""
+      echo "Sleeping..."
+      sleep 3600
+  restartPolicy: Always
+
+---
+# Deployment using custom ServiceAccount
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-client-deployment
+  namespace: serviceaccount-demo
+  labels:
+    app: api-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-client
+  template:
+    metadata:
+      labels:
+        app: api-client
+    spec:
+      serviceAccountName: pod-reader  # Uses pod-reader ServiceAccount
+      containers:
+      - name: api-client
+        image: curlimages/curl:7.88.1
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "API Client using pod-reader ServiceAccount"
+          echo "Token info:"
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          echo "Token length: ${#TOKEN}"
+          echo "Namespace: $(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+          echo "CA cert exists: $(test -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt && echo 'yes' || echo 'no')"
+          echo ""
+          echo "Testing API access..."
+          curl -s -k -H "Authorization: Bearer $TOKEN" \
+            "https://kubernetes.default.svc/api/v1/namespaces/serviceaccount-demo/pods" \
+            | head -20 || echo "API request failed"
+          sleep 3600
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+
+---
+# Service for the no-api-access pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: no-api-access-service
+  namespace: serviceaccount-demo
+  labels:
+    app: demo
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+  selector:
+    serviceaccount: no-api-access
