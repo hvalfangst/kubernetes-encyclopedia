@@ -1,0 +1,483 @@
+# Basic PVC for development
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: basic-pvc
+  labels:
+    app: basic-app
+    environment: development
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# High-performance PVC for database
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-pvc
+  labels:
+    app: database
+    tier: data
+    backup-policy: daily
+  annotations:
+    volume.beta.kubernetes.io/storage-provisioner: ebs.csi.aws.com
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+    limits:
+      storage: 500Gi
+  storageClassName: premium-ssd
+
+---
+# Shared storage PVC for multiple pods
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-storage-pvc
+  labels:
+    app: shared-app
+    type: shared-storage
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: nfs-storage
+
+---
+# Exclusive access PVC using ReadWriteOncePod
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: exclusive-pvc
+  labels:
+    app: exclusive-app
+    tier: database
+spec:
+  accessModes:
+  - ReadWriteOncePod
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: premium-ssd
+
+---
+# StorageClass for premium SSD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: premium-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+mountOptions:
+- noatime
+- data=ordered
+
+---
+# StorageClass for NFS shared storage
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-storage
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: nfs-server.example.com
+  share: /shared
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+mountOptions:
+- hard
+- nfsvers=4.1
+- rsize=1048576
+- wsize=1048576
+
+---
+# StorageClass for cost-optimized storage
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cost-optimized
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# StatefulSet using PVC templates
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-cluster
+  labels:
+    app: database-cluster
+spec:
+  serviceName: database-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: database-cluster
+  template:
+    metadata:
+      labels:
+        app: database-cluster
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        - name: config
+          mountPath: /etc/postgresql
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: postgres-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: database-cluster
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: premium-ssd
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# VolumeSnapshotClass for backups
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: csi-snapshotter
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: ebs.csi.aws.com
+deletionPolicy: Delete
+parameters:
+  tagSpecification_1: "Name=snapshot-${volumeSnapshotName}"
+  tagSpecification_2: "Environment=production"
+  tagSpecification_3: "CreatedBy=kubernetes"
+
+---
+# Volume Snapshot for backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: database-backup
+  labels:
+    backup-type: manual
+    source-pvc: database-pvc
+spec:
+  volumeSnapshotClassName: csi-snapshotter
+  source:
+    persistentVolumeClaimName: database-pvc
+
+---
+# PVC restored from snapshot
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restored-pvc
+  labels:
+    app: restored-app
+    restored-from: database-backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: premium-ssd
+  dataSource:
+    name: database-backup
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+
+---
+# ResourceQuota for storage management
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: storage-quota
+  namespace: default
+spec:
+  hard:
+    requests.storage: "1Ti"
+    persistentvolumeclaims: "50"
+    count/storageclass.storage.k8s.io/premium-ssd: "10"
+    count/storageclass.storage.k8s.io/cost-optimized: "20"
+
+---
+# LimitRange for PVC constraints
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pvc-limits
+  namespace: default
+spec:
+  limits:
+  - type: PersistentVolumeClaim
+    min:
+      storage: 1Gi
+    max:
+      storage: 1Ti
+    default:
+      storage: 10Gi
+    defaultRequest:
+      storage: 5Gi
+
+---
+# Application using basic PVC
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-with-storage
+  labels:
+    app: app-with-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-with-storage
+  template:
+    metadata:
+      labels:
+        app: app-with-storage
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: app-data
+          mountPath: /usr/share/nginx/html
+        - name: logs
+          mountPath: /var/log/nginx
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 128Mi
+            cpu: 100m
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: app-data
+        persistentVolumeClaim:
+          claimName: basic-pvc
+      - name: logs
+        emptyDir: {}
+
+---
+# Multi-container Pod with shared PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-storage-pod
+  labels:
+    app: shared-storage-demo
+spec:
+  containers:
+  - name: writer
+    image: busybox
+    command: 
+    - sh
+    - -c
+    - |
+      while true; do
+        echo "$(date): Writer container writing data" >> /shared/writer.log
+        sleep 30
+      done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  - name: reader
+    image: busybox
+    command:
+    - sh
+    - -c
+    - |
+      while true; do
+        if [ -f /shared/writer.log ]; then
+          echo "$(date): Reader container reading:"
+          tail -5 /shared/writer.log
+        fi
+        sleep 60
+      done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+      readOnly: true
+  - name: processor
+    image: busybox
+    command:
+    - sh  
+    - -c
+    - |
+      while true; do
+        if [ -f /shared/writer.log ]; then
+          wc -l /shared/writer.log > /shared/line_count.txt
+          echo "$(date): Processed $(cat /shared/line_count.txt) lines"
+        fi
+        sleep 120
+      done
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  volumes:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-storage-pvc
+  restartPolicy: Never
+
+---
+# ConfigMap for PostgreSQL configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  labels:
+    app: database-cluster
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 100
+    shared_buffers = 128MB
+    effective_cache_size = 256MB
+    maintenance_work_mem = 16MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    
+    # Logging
+    logging_collector = on
+    log_directory = 'pg_log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'all'
+    
+    # Replication (for future clustering)
+    wal_level = replica
+    max_wal_senders = 3
+    max_replication_slots = 3
+
+---
+# Secret for PostgreSQL password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  labels:
+    app: database-cluster
+type: Opaque
+data:
+  password: cG9zdGdyZXNwYXNzd29yZDEyMw==  # base64 encoded "postgrespassword123"
+
+---
+# Service for database access
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-headless
+  labels:
+    app: database-cluster
+spec:
+  clusterIP: None
+  selector:
+    app: database-cluster
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+
+---
+# Regular service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  labels:
+    app: database-cluster
+spec:
+  selector:
+    app: database-cluster
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  type: ClusterIP
