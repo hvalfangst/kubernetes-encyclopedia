@@ -1,0 +1,86 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress # Name of the Ingress
+  labels:
+    app: nginx
+    tier: frontend
+  annotations:
+    # NGINX Ingress Controller specific annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Enable compression for better performance
+    nginx.ingress.kubernetes.io/enable-compression: "true"
+spec:
+  ingressClassName: nginx # Specify which ingress controller to use
+  # Default backend for unmatched requests
+  defaultBackend:
+    service:
+      name: nginx-service
+      port:
+        number: 80
+  # TLS configuration for HTTPS
+  tls:
+  - hosts:
+    - demo.example.com
+    - api.demo.example.com
+    secretName: demo-tls # TLS secret containing certificate and key
+  # Routing rules
+  rules:
+  # Main application host
+  - host: demo.example.com
+    http:
+      paths:
+      - path: / # Root path
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-service # Target the nginx service
+            port:
+              number: 80
+  # API subdomain host
+  - host: api.demo.example.com
+    http:
+      paths:
+      - path: /v1 # API v1 endpoints
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-service # Same backend for demo
+            port:
+              number: 80
+      - path: /health # Health check endpoint
+        pathType: Exact
+        backend:
+          service:
+            name: nginx-service
+            port:
+              number: 80
+---
+# NodePort Ingress for environments without LoadBalancer support
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-nodeport-ingress
+  labels:
+    app: nginx
+    tier: frontend
+    type: nodeport
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # Use NodePort instead of LoadBalancer
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: nodeport.demo.local # Local development host
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nginx-service
+            port:
+              number: 80
