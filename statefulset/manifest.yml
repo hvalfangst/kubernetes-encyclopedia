@@ -1,0 +1,348 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-headless # Headless service required for StatefulSet
+  labels:
+    app: nginx-stateful
+spec:
+  clusterIP: None # Makes it headless - no cluster IP assigned
+  selector:
+    app: nginx-stateful
+  ports:
+  - port: 80
+    name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-stateful-service # Regular service for external access
+  labels:
+    app: nginx-stateful
+spec:
+  selector:
+    app: nginx-stateful
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nginx-stateful # Name of the StatefulSet
+  labels:
+    app: nginx-stateful
+    component: web-server
+spec:
+  # StatefulSet configuration
+  serviceName: nginx-headless # Must match headless service name
+  replicas: 3 # Creates nginx-stateful-0, nginx-stateful-1, nginx-stateful-2
+  selector:
+    matchLabels:
+      app: nginx-stateful # Must match template labels
+  
+  # Pod management
+  podManagementPolicy: OrderedReady # Pods created in order (0, 1, 2...)
+  updateStrategy:
+    type: RollingUpdate # Update strategy
+    rollingUpdate:
+      partition: 0 # Update all pods (0 means no partition)
+      maxUnavailable: 1 # At most 1 pod unavailable during update
+  
+  # Pod template
+  template:
+    metadata:
+      labels:
+        app: nginx-stateful
+        component: web-server
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21 # Web server image
+        ports:
+        - containerPort: 80
+          name: http
+        
+        # Environment variables with pod identity
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+              
+        # Volume mounts for persistent storage
+        volumeMounts:
+        - name: www-data # Persistent volume for web content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config # Configuration volume
+          mountPath: /etc/nginx/conf.d
+          
+        # Resource limits and requests
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+            
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          
+        # Lifecycle hooks
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                # Create unique content for each pod
+                echo "<h1>Hello from $HOSTNAME</h1>" > /usr/share/nginx/html/index.html
+                echo "<p>Pod IP: $POD_IP</p>" >> /usr/share/nginx/html/index.html
+                echo "<p>Namespace: $POD_NAMESPACE</p>" >> /usr/share/nginx/html/index.html
+                echo "<p>Persistent Volume: $(ls -la /usr/share/nginx/html/)</p>" >> /usr/share/nginx/html/index.html
+      
+      # Additional volumes (non-persistent)
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-stateful-config
+          defaultMode: 0644
+          
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101 # nginx user
+        fsGroup: 101
+        
+  # Persistent volume claim templates
+  volumeClaimTemplates:
+  - metadata:
+      name: www-data # Volume name used in volumeMounts
+      labels:
+        app: nginx-stateful
+    spec:
+      accessModes: ["ReadWriteOnce"] # Single pod access
+      storageClassName: "" # Use default storage class
+      resources:
+        requests:
+          storage: 1Gi # 1GB storage per pod
+---
+# ConfigMap for nginx configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-stateful-config
+  labels:
+    app: nginx-stateful
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+        }
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Status endpoint showing pod info
+        location /status {
+            access_log off;
+            return 200 "Pod: $hostname\n";
+            add_header Content-Type text/plain;
+        }
+    }
+---
+# Example of a database StatefulSet (MySQL)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-headless
+  labels:
+    app: mysql-stateful
+spec:
+  clusterIP: None
+  selector:
+    app: mysql-stateful
+  ports:
+  - port: 3306
+    name: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-stateful
+  labels:
+    app: mysql-stateful
+    component: database
+spec:
+  serviceName: mysql-headless
+  replicas: 1 # Single MySQL instance for demo
+  selector:
+    matchLabels:
+      app: mysql-stateful
+      
+  # Update strategy for database
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+      
+  template:
+    metadata:
+      labels:
+        app: mysql-stateful
+        component: database
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        ports:
+        - containerPort: 3306
+          name: mysql
+          
+        # MySQL environment variables
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "rootpassword123" # In production, use Secrets
+        - name: MYSQL_DATABASE
+          value: "demo_db"
+        - name: MYSQL_USER
+          value: "demo_user"
+        - name: MYSQL_PASSWORD
+          value: "demo_password"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+              
+        # Volume mounts for database data
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: mysql-config
+          mountPath: /etc/mysql/conf.d
+          
+        # Resource allocation for database
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+            
+        # Database health checks
+        livenessProbe:
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - localhost
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - mysql
+            - -h
+            - localhost
+            - -e
+            - SELECT 1
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          
+        # Lifecycle management
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                # Graceful shutdown
+                mysqladmin shutdown -uroot -p$MYSQL_ROOT_PASSWORD
+                
+      # MySQL configuration volume
+      volumes:
+      - name: mysql-config
+        configMap:
+          name: mysql-config
+          
+      # Security context for MySQL
+      securityContext:
+        runAsUser: 999 # mysql user
+        fsGroup: 999
+        
+  # Persistent storage for database
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+      labels:
+        app: mysql-stateful
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "" # Use default storage class
+      resources:
+        requests:
+          storage: 10Gi # 10GB for database
+---
+# MySQL configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  labels:
+    app: mysql-stateful
+data:
+  my.cnf: |
+    [mysqld]
+    # Basic settings
+    default-authentication-plugin=mysql_native_password
+    bind-address=0.0.0.0
+    
+    # Performance settings
+    innodb_buffer_pool_size=256M
+    innodb_log_file_size=64M
+    max_connections=100
+    
+    # Logging
+    general_log=1
+    general_log_file=/var/log/mysql/general.log
+    log_error=/var/log/mysql/error.log
+    
+    # Character set
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
