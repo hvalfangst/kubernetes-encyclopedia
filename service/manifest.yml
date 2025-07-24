@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service # Name of the Service
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  type: ClusterIP # Service type - internal cluster access
+  selector:
+    app: nginx # Must match Pod labels to target
+    tier: frontend
+  ports:
+  - name: http # Named port for clarity
+    protocol: TCP
+    port: 80 # Port that the Service exposes
+    targetPort: 80 # Port on the Pod (nginx default)
+  - name: metrics # Additional port for monitoring
+    protocol: TCP
+    port: 9090
+    targetPort: 9090
+  sessionAffinity: None # Round-robin load balancing
+---
+# LoadBalancer service for external access (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-loadbalancer
+  labels:
+    app: nginx
+    tier: frontend
+    type: external
+  annotations:
+    # Cloud provider specific annotations (example for AWS)
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer # External load balancer
+  selector:
+    app: nginx # Same selector as ClusterIP service
+    tier: frontend
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  externalTrafficPolicy: Local # Preserve source IP and reduce hops
