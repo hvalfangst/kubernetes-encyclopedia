@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment # Name of the Deployment
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  replicas: 3 # Number of desired Pod replicas
+  selector:
+    matchLabels:
+      app: nginx # Must match template labels
+  strategy:
+    type: RollingUpdate # Rolling update strategy
+    rollingUpdate:
+      maxUnavailable: 1 # At most 1 pod unavailable during update
+      maxSurge: 1       # At most 1 extra pod during update
+  template:
+    metadata:
+      labels:
+        app: nginx # Must match selector
+        tier: frontend
+    spec:
+      containers:
+      - name: nginx-container # Name of the container
+        image: nginx:1.21 # Using stable nginx version
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "demo"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        # Health checks for production readiness
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
