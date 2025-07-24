@@ -1,0 +1,292 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-processing-job # Name of the Job
+  labels:
+    app: batch-processor
+    component: data-processing
+    version: v1.0
+spec:
+  # Job execution parameters
+  completions: 5 # Number of successful completions required
+  parallelism: 2 # Maximum number of pods running simultaneously
+  backoffLimit: 3 # Number of retries before marking as failed
+  activeDeadlineSeconds: 1800 # Job timeout (30 minutes)
+  ttlSecondsAfterFinished: 86400 # Clean up after 24 hours
+  
+  # Pod template for the job
+  template:
+    metadata:
+      labels:
+        app: batch-processor
+        component: worker
+    spec:
+      # Job containers
+      containers:
+      - name: data-processor
+        image: busybox # Using busybox for demonstration
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Starting batch processing job..."
+          echo "Worker ID: $HOSTNAME"
+          echo "Processing batch data..."
+          
+          # Simulate data processing work
+          for i in $(seq 1 10); do
+            echo "Processing item $i/10"
+            sleep 5
+          done
+          
+          echo "Batch processing completed successfully!"
+          
+        env:
+        # Environment variables for the job
+        - name: BATCH_SIZE
+          value: "100"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: WORKER_TIMEOUT
+          value: "300"
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+            
+        # Health checks
+        livenessProbe:
+          exec:
+            command: ['sh', '-c', 'ps aux | grep -v grep | grep sh']
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          
+      # Restart policy - important for Jobs
+      restartPolicy: OnFailure # OnFailure or Never (not Always)
+      
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+---
+# Indexed Job example for processing specific items
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: indexed-processing-job
+  labels:
+    app: indexed-processor
+    component: data-processing
+    job-type: indexed
+spec:
+  # Indexed job configuration
+  completionMode: Indexed # Each pod gets a unique index
+  completions: 8 # Process items 0-7
+  parallelism: 3 # Run 3 pods at a time
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600 # 1 hour timeout
+  
+  template:
+    metadata:
+      labels:
+        app: indexed-processor
+        component: indexed-worker
+    spec:
+      containers:
+      - name: indexed-processor
+        image: busybox
+        command: ['sh', '-c']
+        args:
+        - |
+          # Get the job completion index
+          INDEX=${JOB_COMPLETION_INDEX:-0}
+          echo "Starting indexed job for item: $INDEX"
+          echo "Pod name: $HOSTNAME"
+          
+          # Process specific item based on index
+          case $INDEX in
+            0|1) echo "Processing database batch $INDEX"; sleep 20 ;;
+            2|3) echo "Processing file batch $INDEX"; sleep 25 ;;
+            4|5) echo "Processing image batch $INDEX"; sleep 30 ;;
+            *) echo "Processing generic batch $INDEX"; sleep 15 ;;
+          esac
+          
+          echo "Completed processing for index: $INDEX"
+          
+        env:
+        # The job completion index is automatically provided
+        - name: JOB_COMPLETION_INDEX
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+        - name: TOTAL_ITEMS
+          value: "8"
+        - name: BATCH_ID
+          value: "batch-20231001"
+          
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+            
+      restartPolicy: OnFailure
+---
+# Database migration job example
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-migration-job
+  labels:
+    app: myapp
+    component: migration
+    migration-version: v2.1
+spec:
+  # Migration should only run once and not be retried too many times
+  completions: 1
+  parallelism: 1
+  backoffLimit: 1 # Limited retries for migrations
+  activeDeadlineSeconds: 3600 # 1 hour for migration
+  
+  template:
+    metadata:
+      labels:
+        app: myapp
+        component: migration
+    spec:
+      containers:
+      - name: migrator
+        image: busybox # In production, use your migration image
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Starting database migration..."
+          echo "Migration version: v2.1"
+          echo "Database: $DATABASE_HOST"
+          
+          # Simulate migration steps
+          echo "Step 1: Backing up current schema..."
+          sleep 10
+          
+          echo "Step 2: Running migration scripts..."
+          sleep 20
+          
+          echo "Step 3: Validating migration..."
+          sleep 5
+          
+          echo "Database migration completed successfully!"
+          
+        env:
+        # Database connection details (in production, use Secrets)
+        - name: DATABASE_HOST
+          value: "postgres.example.com"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "myapp_production"
+        - name: MIGRATION_VERSION
+          value: "v2.1"
+        # In production, use secretKeyRef for sensitive data:
+        # - name: DATABASE_PASSWORD
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: db-secret
+        #       key: password
+          
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+            
+        # Mount volume for migration scripts (in production)
+        volumeMounts:
+        - name: migration-scripts
+          mountPath: /migrations
+          readOnly: true
+          
+      # Volume for migration scripts
+      volumes:
+      - name: migration-scripts
+        configMap:
+          name: migration-scripts # In production, create this ConfigMap
+          defaultMode: 0755
+          
+      # Never restart migrations
+      restartPolicy: Never
+      
+      # Use specific service account with database permissions
+      serviceAccountName: migration-service-account
+---
+# Work queue pattern job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: work-queue-job
+  labels:
+    app: queue-processor
+    component: worker
+    queue-type: redis
+spec:
+  # Work queue pattern - no completions specified
+  # Job runs until queue is empty or manually stopped
+  parallelism: 4 # 4 workers processing queue items
+  backoffLimit: 5
+  activeDeadlineSeconds: 7200 # 2 hours maximum
+  
+  template:
+    metadata:
+      labels:
+        app: queue-processor
+        component: worker
+    spec:
+      containers:
+      - name: queue-worker
+        image: busybox
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Starting queue worker: $HOSTNAME"
+          echo "Connecting to queue: $QUEUE_URL"
+          
+          # Simulate processing items from a queue
+          PROCESSED=0
+          while [ $PROCESSED -lt 5 ]; do  # Simulate queue processing
+            echo "Processing queue item $((PROCESSED + 1))"
+            echo "Worker: $HOSTNAME processing item from $QUEUE_URL"
+            sleep 10
+            PROCESSED=$((PROCESSED + 1))
+          done
+          
+          echo "Queue worker completed. Processed $PROCESSED items."
+          
+        env:
+        - name: QUEUE_URL
+          value: "redis://redis-service:6379"
+        - name: QUEUE_NAME
+          value: "work-items"
+        - name: WORKER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: MAX_ITEMS_PER_WORKER
+          value: "10"
+          
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+            
+      restartPolicy: OnFailure
