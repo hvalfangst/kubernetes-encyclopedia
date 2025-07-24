@@ -1,0 +1,412 @@
+# Static PersistentVolume with HostPath (Development Only)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hostpath-pv
+  labels:
+    type: local
+    storage: development
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /mnt/data
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: ["minikube", "kind-control-plane", "docker-desktop"]
+
+---
+# Dynamic Storage Class for AWS EBS CSI Driver
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-ebs-gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Dynamic Storage Class for Azure Disk CSI Driver
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-disk-premium
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Premium_LRS
+  kind: Managed
+  fsType: ext4
+  cachingmode: ReadOnly
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Dynamic Storage Class for GCE Persistent Disk CSI Driver
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gce-pd-ssd
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+  zones: "us-central1-a,us-central1-b"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# NFS PersistentVolume for shared storage
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-pv
+  labels:
+    type: nfs
+    storage: shared
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteMany
+  - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs
+  nfs:
+    server: nfs-server.example.com
+    path: /exported/path
+    readOnly: false
+  mountOptions:
+  - hard
+  - nfsvers=4.1
+  - rsize=1048576
+  - wsize=1048576
+  - timeo=600
+  - retrans=2
+
+---
+# Local PersistentVolume for high-performance storage
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv
+  labels:
+    type: local
+    performance: high
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-storage
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: ["node-1"]
+
+---
+# PersistentVolumeClaim with ReadWriteOncePod access mode
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: exclusive-pvc
+  labels:
+    app: database
+spec:
+  accessModes:
+  - ReadWriteOncePod  # Exclusive access for single Pod
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: aws-ebs-gp3
+
+---
+# VolumeSnapshotClass for backup functionality
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: csi-snapshotter
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: ebs.csi.aws.com
+deletionPolicy: Delete
+parameters:
+  tagSpecification_1: "Name=snapshot-${volumeSnapshotName}"
+  tagSpecification_2: "Environment=production"
+
+---
+# Volume Snapshot for backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: database-backup
+  labels:
+    backup: daily
+spec:
+  volumeSnapshotClassName: csi-snapshotter
+  source:
+    persistentVolumeClaimName: exclusive-pvc
+
+---
+# CSI PersistentVolume example
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: csi-pv-example
+  labels:
+    type: csi
+    storage: cloud
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: premium-ssd
+  csi:
+    driver: ebs.csi.aws.com
+    volumeHandle: vol-1234567890abcdef0
+    fsType: ext4
+    volumeAttributes:
+      storage.kubernetes.io/csiProvisionerIdentity: "1234567890"
+  mountOptions:
+  - noatime
+  - data=ordered
+
+---
+# High-performance StorageClass with IOPS provisioning
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: high-performance-io2
+provisioner: ebs.csi.aws.com
+parameters:
+  type: io2
+  iops: "10000"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# PersistentVolumeClaim for development
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dev-pvc
+  labels:
+    environment: development
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: manual
+
+---
+# Pod with secure volume usage
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-storage-pod
+  labels:
+    app: secure-app
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 3000
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: app
+    image: nginx:1.21
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: data
+      mountPath: /usr/share/nginx/html
+    - name: tmp
+      mountPath: /tmp
+    - name: cache
+      mountPath: /var/cache/nginx
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: dev-pvc
+  - name: tmp
+    emptyDir: {}
+  - name: cache
+    emptyDir: {}
+  restartPolicy: Never
+
+---
+# StatefulSet with VolumeClaimTemplate
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-statefulset
+  labels:
+    app: database
+spec:
+  serviceName: database-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: root-password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - localhost
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - mysql
+            - -h
+            - localhost
+            - -e
+            - SELECT 1
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: database
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: aws-ebs-gp3
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+# Multi-container Pod with shared storage
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-storage-pod
+  labels:
+    app: shared-app
+spec:
+  containers:
+  - name: writer
+    image: busybox
+    command: ['sh', '-c', 'while true; do echo "$(date): Writer container" >> /shared/log.txt; sleep 10; done']
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  - name: reader
+    image: busybox
+    command: ['sh', '-c', 'while true; do tail -f /shared/log.txt; sleep 5; done']
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  volumes:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-pvc
+
+---
+# PVC for shared storage pod
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-pvc
+  labels:
+    type: shared
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: nfs
+
+---
+# Secret for database passwords
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+type: Opaque
+data:
+  root-password: cm9vdHBhc3N3b3JkMTIz  # base64 encoded "rootpassword123"
