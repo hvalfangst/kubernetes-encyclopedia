@@ -1,0 +1,347 @@
+# NetworkPolicy Example: Three-Tier Web Application
+# This example demonstrates network segmentation for a typical web application
+# with frontend, backend, and database tiers
+
+---
+# Namespace for the demo application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netpol-demo
+  labels:
+    name: netpol-demo
+    env: demo
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: netpol-demo
+  labels:
+    app: frontend
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.20
+        ports:
+        - containerPort: 80
+          name: http
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: netpol-demo
+  labels:
+    app: frontend
+    tier: frontend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: frontend
+    tier: frontend
+
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: netpol-demo
+  labels:
+    app: backend
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+    spec:
+      containers:
+      - name: app
+        image: httpd:2.4
+        ports:
+        - containerPort: 80
+          name: http
+
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: netpol-demo
+  labels:
+    app: backend
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: backend
+    tier: backend
+
+---
+# Database Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: netpol-demo
+  labels:
+    app: database
+    tier: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: database
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        env:
+        - name: POSTGRES_DB
+          value: "webapp"
+        - name: POSTGRES_USER
+          value: "webapp"
+        - name: POSTGRES_PASSWORD
+          value: "webapp123"
+        ports:
+        - containerPort: 5432
+          name: postgres
+
+---
+# Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-service
+  namespace: netpol-demo
+  labels:
+    app: database
+    tier: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: database
+    tier: database
+
+---
+# NetworkPolicy: Default Deny All Traffic
+# This creates a secure baseline by denying all traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: netpol-demo
+  annotations:
+    description: "Default deny all ingress and egress traffic"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# NetworkPolicy: Allow Frontend Traffic
+# Frontend can receive traffic from ingress and send to backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-netpol
+  namespace: netpol-demo
+  annotations:
+    description: "Allow frontend to receive external traffic and communicate with backend"
+spec:
+  podSelector:
+    matchLabels:
+      tier: frontend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from external sources (ingress controllers, load balancers)
+  - {}
+  egress:
+  # Allow communication to backend
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow DNS resolution
+  - to: {}
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# NetworkPolicy: Allow Backend Traffic
+# Backend can receive from frontend and send to database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-netpol
+  namespace: netpol-demo
+  annotations:
+    description: "Allow backend to receive from frontend and communicate with database"
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from frontend
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  # Allow communication to database
+  - to:
+    - podSelector:
+        matchLabels:
+          tier: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow DNS resolution
+  - to: {}
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# NetworkPolicy: Allow Database Traffic
+# Database can only receive traffic from backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-netpol
+  namespace: netpol-demo
+  annotations:
+    description: "Allow database to receive traffic only from backend tier"
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic only from backend
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:
+  # Allow DNS resolution (minimal egress)
+  - to: {}
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# NetworkPolicy: Allow Monitoring Access
+# Allow monitoring tools to scrape metrics from all tiers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-access
+  namespace: netpol-demo
+  annotations:
+    description: "Allow monitoring tools to access application metrics"
+spec:
+  podSelector:
+    matchLabels: {}  # Apply to all pods in namespace
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow Prometheus/monitoring tools from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Common metrics port
+  # Allow monitoring from kube-system (node exporters, etc.)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 9090
+
+---
+# Test Pod for connectivity testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: netpol-demo
+  labels:
+    app: test-pod
+    role: testing
+spec:
+  containers:
+  - name: test
+    image: busybox:1.35
+    command:
+    - sleep
+    - "3600"
+  restartPolicy: Always
