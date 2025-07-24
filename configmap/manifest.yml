@@ -1,0 +1,186 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config # Name of the ConfigMap
+  labels:
+    app: demo-app
+    component: config
+data:
+  # Simple key-value configuration
+  environment: "development"
+  log_level: "debug"
+  debug_mode: "true"
+  max_connections: "100"
+  timeout: "30s"
+  
+  # Database configuration
+  database_host: "postgres.example.com"
+  database_port: "5432"
+  database_name: "demo_app"
+  
+  # Cache configuration
+  redis_host: "redis.example.com"
+  redis_port: "6379"
+  redis_ttl: "3600"
+  
+  # Feature flags
+  enable_analytics: "true"
+  enable_metrics: "true"
+  maintenance_mode: "false"
+  
+  # Application configuration file
+  app.properties: |
+    # Application Properties
+    app.name=DemoApplication
+    app.version=1.0.0
+    app.description=Demo application for ConfigMap testing
+    
+    # Server configuration
+    server.port=8080
+    server.host=0.0.0.0
+    
+    # Database settings
+    database.url=postgresql://${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}
+    database.pool.min=5
+    database.pool.max=20
+    database.timeout=30s
+    
+    # Logging configuration
+    logging.level=${LOG_LEVEL}
+    logging.format=json
+    logging.file=/var/log/app.log
+  
+  # NGINX configuration file
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name demo.example.com;
+        
+        # Static content
+        location /static/ {
+            alias /var/www/static/;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        # API proxy
+        location /api/ {
+            proxy_pass http://backend:8080/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeouts
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 10s;
+            proxy_read_timeout 10s;
+        }
+        
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Default location
+        location / {
+            root /var/www/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+  
+  # JSON configuration
+  config.json: |
+    {
+      "api": {
+        "baseUrl": "https://api.example.com",
+        "timeout": 5000,
+        "retries": 3,
+        "rateLimit": {
+          "enabled": true,
+          "requestsPerMinute": 100
+        }
+      },
+      "database": {
+        "driver": "postgresql",
+        "ssl": true,
+        "migrations": {
+          "auto": false,
+          "path": "/migrations"
+        }
+      },
+      "cache": {
+        "provider": "redis",
+        "defaultTTL": 3600,
+        "keyPrefix": "demo-app:"
+      },
+      "monitoring": {
+        "metrics": {
+          "enabled": true,
+          "port": 9090,
+          "path": "/metrics"
+        },
+        "tracing": {
+          "enabled": true,
+          "service": "demo-app",
+          "version": "1.0.0"
+        }
+      }
+    }
+---
+# Immutable ConfigMap for static configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: static-config
+  labels:
+    app: demo-app
+    component: static-config
+    version: v1
+data:
+  # Version information
+  app_version: "1.0.0"
+  build_number: "123"
+  git_commit: "abc123def456"
+  
+  # Static API endpoints
+  auth_service_url: "https://auth.example.com"
+  user_service_url: "https://users.example.com"
+  notification_service_url: "https://notifications.example.com"
+  
+  # Constants
+  max_upload_size: "10MB"
+  supported_languages: "en,es,fr,de"
+  default_timezone: "UTC"
+  
+  # Static configuration file
+  constants.yaml: |
+    application:
+      name: "Demo Application"
+      version: "1.0.0"
+      company: "Example Corp"
+      support_email: "support@example.com"
+    
+    limits:
+      max_file_size: 10485760  # 10MB in bytes
+      max_request_size: 1048576  # 1MB in bytes
+      session_timeout: 3600  # 1 hour in seconds
+    
+    features:
+      user_registration: true
+      password_reset: true
+      email_verification: true
+      two_factor_auth: false
+    
+    integrations:
+      stripe:
+        public_key: "pk_test_..."
+      sendgrid:
+        from_email: "noreply@example.com"
+      google_analytics:
+        tracking_id: "GA-XXXXXXXX-X"
+        
+immutable: true # Make this ConfigMap immutable
